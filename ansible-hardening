@@ -1,0 +1,131 @@
+- hosts: all
+  become: yes
+  become_user: root
+  become_method: sudo
+  remote_user: admin
+
+  vars:
+    syslog_facility: AUTHPRIV
+    log_level: INFO
+  
+  tasks:
+   - name: Get the Active IP address
+     shell: hostname -I|cut -d " " -f1
+     register: get_ip
+
+   - set_fact:
+      IP={{ get_ip.stdout }}
+      
+   - name: Change SSH daemon configuration
+     lineinfile:
+       line: "{{ item.line }}"
+       regexp: "{{ item.regexp }}"
+       path: /etc/ssh/sshd_config
+     loop:
+       - line: 'AddressFamily inet'
+         regexp: '^(#)?AddressFamily'
+         
+       - line: 'ListenAddress {{IP}}'
+         regexp: '^(#)?ListenAddress'      
+         
+       - line: 'SyslogFacility {{ syslog_facility }}'
+         regexp: '^(#)?SyslogFacility'      
+         
+       - line: 'LogLevel {{ log_level }}'
+         regexp: '^(#)?LogLevel'          
+         
+       - line: 'PermitRootLogin no'
+         regexp: '^(#)?PermitRootLogin'
+         
+       - line: 'MaxAuthTries 3'
+         regexp: '^(#)?MaxAuthTries'
+         
+       - line: 'HostbasedAuthentication no'
+         regexp: '^(#)?HostbasedAuthentication'  
+         
+       - line: 'IgnoreRhosts no'
+         regexp: '^(#)?IgnoreRhosts'
+         
+       - line: 'PermitEmptyPasswords no'
+         regexp: '^(#)?PermitEmptyPasswords'
+         
+       - line: 'PasswordAuthentication yes'
+         regexp: '^(#)?PasswordAuthentication'
+         
+       - line: 'X11Forwarding no'
+         regexp: '^(#)?X11Forwarding'
+         
+       - line: 'PermitUserEnvironment no'
+         regexp: '^(#)?PermitUserEnvironment'
+         
+       - line: 'ClientAliveInterval 900'
+         regexp: '^(#)?ClientAliveInterval'
+         
+       - line: 'ClientAliveCountMax 0'
+         regexp: '^(#)?ClientAliveCountMax'
+         
+       - line: 'UseDNS no'
+         regexp: '^(#)?UseDNS'
+         
+       - line: 'Subsystem       sftp    /usr/libexec/openssh/sftp-server  -f {{ syslog_facility }} -l {{ log_level }}'
+         regexp: '^(#)?Subsystem'  
+
+   - name: Set secure HostKeyAlgorithms
+     lineinfile:
+       path: /etc/ssh/sshd_config
+       insertafter: '^#RekeyLimit default none'
+       line: 'HostKeyAlgorithms ssh-ed25519,rsa-sha2-512,rsa-sha2-256'
+       state: present
+         
+   - name: Set secure KexAlgorithms
+     lineinfile:
+       path: /etc/ssh/sshd_config
+       insertafter: '^#RekeyLimit default none'
+       line: 'KexAlgorithms curve25519-sha256@libssh.org,curve25519-sha256,diffie-hellman-group18-sha512,diffie-hellman-group16-sha512,diffie-hellman-group14-sha256,diffie-hellman-group-exchange-sha256'
+       state: present
+         
+   - name: Set secure Ciphers
+     lineinfile:
+       path: /etc/ssh/sshd_config
+       insertafter: '^#RekeyLimit default none'
+       line: 'Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr'
+       state: present
+
+   - name: Set secure MACs
+     lineinfile:
+       path: /etc/ssh/sshd_config
+       insertafter: '^#RekeyLimit default none'
+       line: 'MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,umac-128-etm@openssh.com'
+       state: present
+
+   - name: Enable crypto policy on RHEL 7
+     lineinfile:
+       path: /etc/sysconfig/sshd
+       regexp: '^'
+       insertafter: EOF
+       line: 'CRYPTO_POLICY='
+     when: (ansible_facts['distribution'] == "RedHat" and ansible_facts['distribution_major_version'] == "7")
+
+   - name: Enable crypto policy on RHEL 8
+     lineinfile:
+       path: /etc/sysconfig/sshd
+       regexp: '^(#)?CRYPTO_POLICY='
+       line: 'CRYPTO_POLICY='
+       state: present
+     when: (ansible_facts['distribution'] == "RedHat" and ansible_facts['distribution_major_version'] > "7")
+         
+   - name: Create tmout.sh file
+     copy:
+       dest: /etc/profile.d/tmout.sh
+       content: |
+         TMOUT=900
+         readonly TMOUT
+         export TMOUT
+       owner: root
+       group: root
+       mode: '0744'     
+    
+   - name: Restart SSHD service
+     service:
+       name: sshd
+       state: restarted
